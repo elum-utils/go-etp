@@ -405,6 +405,7 @@ func (s *Session) handleIncomingTransferBegin(ctx context.Context, frame Frame) 
 
 	writer, err := s.config.Receive.TransferHandler(ctx, IncomingTransferInfo{
 		TransferID: frame.Header.TransferID,
+		RequestID:  frame.Header.RequestID,
 		Meta:       meta,
 	})
 	if err != nil {

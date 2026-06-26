@@ -192,6 +192,7 @@ type TransferHandler func(context.Context, IncomingTransferInfo) (IncomingTransf
 
 type IncomingTransferInfo struct {
 	TransferID uint64
+	RequestID  uint64
 	Meta       TransferBegin
 }
 
