@@ -1,8 +1,13 @@
 # go-etp
 
-Go reference implementation of the Elum Transport Protocol core.
+Go implementation of the Elum Transport Protocol and its application server layer.
 
-This package contains the protocol/session layer only:
+The root package exposes `App`, compiled routing, middleware groups, peers, unified
+request/response and body handling. The wire/session implementation lives in
+`internal/etp` and is exposed through the root package where low-level integration
+is required.
+
+The protocol includes:
 
 - binary frame header encode/decode;
 - payload encode/decode;
@@ -17,19 +22,14 @@ This package contains the protocol/session layer only:
 - cancellation;
 - checksum;
 - graceful close;
-- transfer resume primitives;
+- transfer resume;
+- terminal transfer commit confirmation;
+- bounded send/receive queues and configurable per-session handler workers;
+- strict decoder, capability, rate-limit, and slowloris enforcement;
+- panic isolation at application callback boundaries;
 - stream slowloris guard.
 
-It intentionally does not contain the higher-level application API:
-
-- router;
-- `server.On`;
-- middleware groups;
-- `Request.Validate`;
-- `elum.Body` app binding;
-- React/Solid/Swift/Android SDK code.
-
-The wire specification lives in [docs/RFC.md](docs/RFC.md).
+The wire specification lives in [RFC.md](RFC.md).
 
 ## Import
 
@@ -38,12 +38,51 @@ import etp "github.com/elum-utils/go-etp"
 ```
 
 ```go
-client := etp.NewSessionWithConfig(transport, etp.DefaultClientConfig())
-server := etp.NewSessionWithConfig(transport, etp.DefaultServerConfig())
+app := etp.New(etp.Config{})
+app.Use("message.*", func(next etp.Handler) etp.Handler {
+	return func(ctx *etp.Context) error {
+		return next(ctx)
+	}
+})
+app.On("message.send", func(ctx *etp.Context) error {
+	body, ok := ctx.BodyView()
+	if !ok {
+		var err error
+		body, err = ctx.Bytes()
+		if err != nil {
+			return err
+		}
+	}
+	_, err := ctx.Respond(etp.SendOptions{Event: "message.sent", Data: body})
+	return err
+})
 ```
+
+`Context` and `BodyView` are valid only while the handler is running. Use
+`EventCopy` or `Bytes` when data must outlive the callback.
+
+## Adapters
+
+Adapters are independent nested modules, so an application downloads only the
+network stack it imports:
+
+- `github.com/elum-utils/go-etp/adapters/gorilla`
+- `github.com/elum-utils/go-etp/adapters/fiber`
+- `github.com/elum-utils/go-etp/adapters/nbio`
+- `github.com/elum-utils/go-etp/adapters/tcp`
+- `github.com/elum-utils/go-etp/adapters/tls`
+- `github.com/elum-utils/go-etp/adapters/quic`
+- `github.com/elum-utils/go-etp/adapters/webtransport`
+
+Large bodies are selected automatically by `Session.Send`, `Request`, and
+`Respond`: inline payloads use one request frame while larger or streaming bodies
+use transfer begin/data/end frames.
 
 ## Test
 
 ```bash
 go test ./...
+go test -race ./...
 ```
+
+Each adapter is tested from its own module directory.

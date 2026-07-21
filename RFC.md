@@ -171,6 +171,7 @@ Capabilities are announced in `Hello`.
 | 9 | Request/response |
 | 10 | Graceful close |
 | 11 | Transfer resume |
+| 12 | Transfer commit |
 
 Endpoints MUST NOT use a feature that the remote endpoint did not advertise.
 
@@ -327,6 +328,8 @@ For streamed body:
 
 Chunked body transfer is used for large logical messages. It sends one application event as one transfer, not as many separate file events.
 
+`TransferID` values used by `FrameTransferBegin` MUST be non-zero, strictly increasing, and MUST NOT be reused within one session, including after cancellation or completion. Reconnect resume uses `FrameTransferResume` with the original ID; it does not send another `FrameTransferBegin`.
+
 Sequence:
 
 1. `FrameTransferBegin`
@@ -398,7 +401,7 @@ The final byte count across all chunks MUST equal `TransferBegin.TotalSize`. If 
 
 ## 16. Ack, Nack, Retry
 
-Receivers SHOULD acknowledge received chunk ranges with `FrameAck`.
+Receivers SHOULD acknowledge received chunk ranges with `FrameAck`. An ACK means the bytes were successfully committed by `IncomingTransferWriter.Write`; merely accepting a chunk into an in-memory queue is not sufficient.
 
 Ack payload:
 
@@ -415,6 +418,8 @@ Receivers MAY send `FrameNack` for missing chunks, protocol errors, write failur
 
 If retry limit is reached, sender MUST fail the transfer and surface the error to upper layers.
 
+After all chunks are ACKed, the sender sends `FrameTransferEnd`. Success is final only after the receiver durably closes/commits its writer and replies with `FrameTransferState(Completed)`. The sender MUST retry `FrameTransferEnd` until that terminal state arrives or the retry limit is exhausted. This behavior requires `CapabilityTransferCommit`.
+
 ## 17. Flow Control
 
 Flow control prevents unbounded memory use and prevents large transfers from blocking realtime traffic.
@@ -429,7 +434,10 @@ Configurable values include:
 - max transfer bytes;
 - max chunk size;
 - ack timeout;
-- retry limit.
+- retry limit;
+- transfer open timeout;
+- transfer commit timeout;
+- completed transfer cache size and TTL.
 
 Receivers MAY advertise available capacity via `FrameWindow`. Senders MUST respect the most recent remote window when flow control capability is enabled.
 
@@ -453,11 +461,11 @@ Checksum is optional. Implementations MAY disable it for optimized trusted clien
 
 ## 20. Resume
 
-Transfer resume uses `FrameTransferResume`.
+Transfer resume uses `FrameTransferResume` and MUST be capability-negotiated.
 
-The receiver may decide whether it can resume a partially received transfer. If accepted, it returns the received byte count and next expected chunk. Sender resumes from that point.
+The receiver may decide whether it can resume a partially received transfer. If accepted, it returns the authoritative committed byte count and next expected chunk. Both values MUST describe the same chunk boundary and MUST fit the original transfer metadata. The sender reopens its source at that byte offset and resumes from the returned chunk.
 
-Resume storage is application-defined. The base protocol only defines signaling and validation hooks.
+Resume storage is application-defined. Store callbacks are bounded by the transfer-open timeout; an implementation MUST keep a timed-out callback counted against the concurrent-open limit until it actually returns. Tokens passed to an asynchronous store MUST remain stable after the input frame is released.
 
 ## 21. Heartbeat
 
@@ -564,7 +572,7 @@ Close flags:
 | 2 | No new requests |
 | 3 | No new transfers |
 
-In drain mode, endpoint SHOULD reject new work while allowing active transfers to finish until timeout. Close should complete with `FrameCloseAck`.
+In drain mode, endpoint SHOULD reject new work while allowing active transfers to finish until timeout. Close completes only after `FrameCloseAck` is physically written and received. Simultaneous close is valid: both endpoints MUST acknowledge the peer close without deadlocking and then converge on `Closed`.
 
 ## 26. Security Requirements
 
@@ -579,6 +587,10 @@ Implementations MUST:
 - avoid storing cancelled transfers indefinitely;
 - handle unknown transfer chunks safely;
 - avoid unbounded buffering of streamed bodies;
+- reject non-canonical headers, reserved bits, overflowing lengths, and trailing payload bytes;
+- keep opening, timed-out, and stuck-commit transfers counted against configured concurrency limits;
+- bound send queues, handler queues, completed-transfer caches, and multistream prefaces;
+- recover panics from application handlers, auth/storage callbacks, transfer readers/writers, and notification callbacks;
 - surface protocol events to upper policy layer.
 
 Implementations SHOULD:
@@ -628,6 +640,8 @@ Handlers SHOULD NOT need separate transfer callbacks for normal application bodi
 
 Policy hooks such as auth, ban decisions, bad-frame handling, and slowloris decisions remain above the protocol layer.
 
+Application handlers and context-aware transfer writers SHOULD honor cancellation promptly. The Go runtime does not wait forever for an uncooperative callback during session shutdown; such calls remain bounded by configured handler workers or transfer slots until they return.
+
 ## 29. Default Limits
 
 Default Go implementation limits:
@@ -643,6 +657,10 @@ Default Go implementation limits:
 | Max transfer size | 512 MiB |
 | Ack timeout | 3 seconds |
 | Retry limit | 3 |
+| Transfer open timeout | 5 seconds |
+| Transfer commit timeout | 30 seconds |
+| Completed transfer cache | 1024 entries, 1 minute TTL |
+| Max frame | 8 MiB |
 | Max text payload | 1 MiB |
 | Max request payload | 1 MiB |
 | Max response payload | 1 MiB |
@@ -669,6 +687,10 @@ A conforming implementation MUST pass:
 - flow control tests;
 - slowloris tests;
 - rate limit tests;
+- capability and state-machine enforcement tests;
+- disconnect, simultaneous-close, drain, and resume tests;
+- concurrent transfer-finalization tests;
+- race-detector tests;
 - fuzz tests for binary decoders.
 
 Language clients SHOULD share golden vectors for:
@@ -700,11 +722,9 @@ These concerns belong to the application or adapter layer.
 
 ## 32. Open Implementation Notes
 
-The MVP implementation currently targets the protocol behavior described above. Future hardening work should include:
+The Go reference implementation implements the protocol behavior described above. Work outside the core wire/session contract remains:
 
 - public conformance vectors for TS/Swift/Java;
-- stricter capability enforcement tests;
-- broader decoder fuzzing;
 - production WebTransport interoperability tests;
 - documented frontend package API;
 - benchmarks for inline vs chunked thresholds;
