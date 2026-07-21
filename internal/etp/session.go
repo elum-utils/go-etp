@@ -34,6 +34,7 @@ type Session struct {
 	nextTransfer  atomic.Uint64
 	onProgress    func(Progress)
 	onEvent       func(ProtocolEvent)
+	onEstablished func() error
 	state         atomic.Uint32
 	lastReadNano  atomic.Int64
 	lastWriteNano atomic.Int64
@@ -664,6 +665,14 @@ func (s *Session) OnProtocolEvent(fn func(ProtocolEvent)) {
 	s.callbackMu.Unlock()
 }
 
+// OnEstablished registers a callback that runs once after the session has
+// completed its ETP handshake. Register it before Run.
+func (s *Session) OnEstablished(fn func() error) {
+	s.callbackMu.Lock()
+	s.onEstablished = fn
+	s.callbackMu.Unlock()
+}
+
 func (s *Session) State() SessionState {
 	return SessionState(s.state.Load())
 }
@@ -1028,9 +1037,7 @@ func (s *Session) SendHelloAck(role string) error {
 	if err := s.send(f); err != nil {
 		return err
 	}
-	s.setState(SessionEstablished)
-	s.applyReceiveFrameLimit()
-	return nil
+	return s.established()
 }
 
 func (s *Session) SendText(text string) error {
@@ -1970,6 +1977,18 @@ func (s *Session) emitEvent(e ProtocolEvent) {
 			return nil
 		})
 	}
+}
+
+func (s *Session) established() error {
+	s.setState(SessionEstablished)
+	s.applyReceiveFrameLimit()
+	s.callbackMu.RLock()
+	fn := s.onEstablished
+	s.callbackMu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return callSafely("established callback", fn)
 }
 
 func (s *Session) setState(state SessionState) {

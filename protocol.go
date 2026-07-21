@@ -59,6 +59,25 @@ const (
 	SessionEstablished = protocol.SessionEstablished
 	SessionClosed      = protocol.SessionClosed
 	SessionFailed      = protocol.SessionFailed
+
+	EventProtocolViolation = protocol.EventProtocolViolation
+	EventSlowloris         = protocol.EventSlowloris
+	EventTransferFailed    = protocol.EventTransferFailed
+	EventTransferUnknown   = protocol.EventTransferUnknown
+	EventTransferCanceled  = protocol.EventTransferCanceled
+	EventWriteFailed       = protocol.EventWriteFailed
+	EventNackReceived      = protocol.EventNackReceived
+	EventAckTimeout        = protocol.EventAckTimeout
+	EventAuthAccepted      = protocol.EventAuthAccepted
+	EventAuthRejected      = protocol.EventAuthRejected
+	EventAuthTimeout       = protocol.EventAuthTimeout
+	EventAuthRequired      = protocol.EventAuthRequired
+	EventErrorReceived     = protocol.EventErrorReceived
+	EventGoAwayReceived    = protocol.EventGoAwayReceived
+	EventCloseAckReceived  = protocol.EventCloseAckReceived
+	EventHandlerFailed     = protocol.EventHandlerFailed
+	EventRateLimited       = protocol.EventRateLimited
+	EventChecksumMismatch  = protocol.EventChecksumMismatch
 )
 
 type (

@@ -17,6 +17,22 @@ type Middleware func(Handler) Handler
 
 type ErrorHandler func(*Context, error)
 
+// ProtocolEventHandler receives non-application protocol events. It is called
+// synchronously by the session and should return quickly.
+type ProtocolEventHandler func(context.Context, *Peer, protocol.ProtocolEvent)
+
+// ProgressHandler receives transfer progress for incoming and outgoing bodies.
+// It is called synchronously by the session and should return quickly.
+type ProgressHandler func(context.Context, *Peer, protocol.Progress)
+
+// ConnectHandler runs once after authentication and the ETP handshake succeed.
+// Returning an error closes the connection.
+type ConnectHandler func(context.Context, *Peer) error
+
+// DisconnectHandler runs once when an established peer disconnects. The cause
+// is nil for a graceful close.
+type DisconnectHandler func(context.Context, *Peer, error)
+
 type Config struct {
 	Session            protocol.SessionConfig
 	MaxMemoryBody      int64
@@ -62,6 +78,10 @@ func (p *Peer) Session() *protocol.Session { return p.session }
 func (p *Peer) Adapter() string { return p.adapter }
 
 func (p *Peer) RemoteAddr() string { return p.remote }
+
+func (p *Peer) Identity() protocol.SessionIdentity { return p.session.Identity() }
+
+func (p *Peer) Close() error { return p.session.Close() }
 
 func (p *Peer) Send(ctx context.Context, opts SendOptions) (MessageHandle, error) {
 	return p.session.Send(ctx, toETPMessageOptions(opts))

@@ -387,17 +387,17 @@ func (s *Session) checkRateLimit(frame Frame, now time.Time) error {
 	}
 	if s.config.RateLimit.MaxFramesPerSecond > 0 && s.rate.frames > s.config.RateLimit.MaxFramesPerSecond {
 		s.rate.mu.Unlock()
-		s.emitEvent(ProtocolEvent{Code: EventProtocolViolation, Message: "rate limit exceeded: frames", FrameType: frame.Header.FrameType})
+		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: frames", FrameType: frame.Header.FrameType})
 		return ErrRateLimitFrames
 	}
 	if s.config.RateLimit.MaxBytesPerSecond > 0 && s.rate.bytes > s.config.RateLimit.MaxBytesPerSecond {
 		s.rate.mu.Unlock()
-		s.emitEvent(ProtocolEvent{Code: EventProtocolViolation, Message: "rate limit exceeded: bytes", FrameType: frame.Header.FrameType})
+		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: bytes", FrameType: frame.Header.FrameType})
 		return ErrRateLimitBytes
 	}
 	if s.config.RateLimit.MaxAuthAttempts > 0 && s.rate.authAttempts > s.config.RateLimit.MaxAuthAttempts {
 		s.rate.mu.Unlock()
-		s.emitEvent(ProtocolEvent{Code: EventProtocolViolation, Message: "rate limit exceeded: auth attempts", FrameType: frame.Header.FrameType})
+		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: auth attempts", FrameType: frame.Header.FrameType})
 		return ErrRateLimitAuth
 	}
 	s.rate.mu.Unlock()
@@ -412,6 +412,7 @@ func (s *Session) markBadFrame(frame Frame, message string) error {
 	s.rate.mu.Unlock()
 	s.emitEvent(ProtocolEvent{Code: EventProtocolViolation, Message: message, FrameType: frame.Header.FrameType})
 	if limit > 0 && badFrames > limit {
+		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: bad frames", FrameType: frame.Header.FrameType})
 		_ = s.SendError(ErrorRateLimited, frame, "rate limit exceeded: bad frames")
 		return ErrRateLimitBadFrames
 	}
@@ -441,9 +442,7 @@ func (s *Session) HandleHelloAck(frame Frame) error {
 	if err := s.acceptRemoteHello(hello, RoleServer); err != nil {
 		return err
 	}
-	s.setState(SessionEstablished)
-	s.applyReceiveFrameLimit()
-	return nil
+	return s.established()
 }
 
 func (s *Session) acceptRemoteHello(hello Hello, expectedRole string) error {
@@ -1230,6 +1229,7 @@ func (s *Session) handleIncomingTransferEnd(ctx context.Context, frame Frame) er
 		return s.sendNack(frame.Header.TransferID, firstChunk, lastChunk, NackInvalidChunk)
 	}
 	if checksum != nil && !bytes.Equal(checksum, expectedChecksum[:]) {
+		s.emitEvent(ProtocolEvent{Code: EventChecksumMismatch, Message: "transfer checksum mismatch", FrameType: frame.Header.FrameType, TransferID: frame.Header.TransferID})
 		s.removeIncoming(frame.Header.TransferID)
 		abortIncomingWriter(tr.writer)
 		s.rememberTransferState(TransferStateMessage{TransferID: frame.Header.TransferID, ReceivedBytes: receivedBytes, NextChunk: nextChunk, Flags: TransferStateFlagFailed, ReasonCode: NackInvalidChunk})

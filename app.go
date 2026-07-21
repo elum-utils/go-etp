@@ -15,10 +15,15 @@ const defaultMaxPooledBody = 64 << 10
 var ErrNilFrameTransport = errors.New("transport: nil frame transport")
 
 type App struct {
-	router      *Router
-	config      Config
-	contexts    sync.Pool
-	bodyWriters sync.Pool
+	router          *Router
+	config          Config
+	contexts        sync.Pool
+	bodyWriters     sync.Pool
+	onConnect       ConnectHandler
+	onDisconnect    DisconnectHandler
+	onNotFound      Handler
+	onProtocolEvent ProtocolEventHandler
+	onProgress      ProgressHandler
 }
 
 func New(config Config) *App {
@@ -51,6 +56,97 @@ func (a *App) On(pattern string, handler Handler) error {
 	return a.router.On(pattern, handler)
 }
 
+// OnAuth registers the server-side authentication handler and enables required
+// ETP authentication. It must be registered before Compile.
+func (a *App) OnAuth(handler AuthHandler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.config.Session.Auth.Required = true
+	a.config.Session.Auth.Handler = handler
+	return nil
+}
+
+// OnError registers a handler for errors returned by middleware, routes, and
+// OnNotFound. Protocol-level events use OnProtocolEvent.
+func (a *App) OnError(handler ErrorHandler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.config.OnError = handler
+	return nil
+}
+
+// OnProtocolEvent registers a handler for malformed frames, rate limits,
+// authentication failures, transport events, and transfer state events.
+func (a *App) OnProtocolEvent(handler ProtocolEventHandler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.onProtocolEvent = handler
+	return nil
+}
+
+// OnProgress registers a handler for incoming and outgoing transfer progress.
+func (a *App) OnProgress(handler ProgressHandler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.onProgress = handler
+	return nil
+}
+
+// OnConnect registers a handler that runs after authentication and handshake.
+// It must be registered before Compile.
+func (a *App) OnConnect(handler ConnectHandler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.onConnect = handler
+	return nil
+}
+
+// OnDisconnect registers a handler that runs once when a peer disconnects.
+// It must be registered before Compile.
+func (a *App) OnDisconnect(handler DisconnectHandler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.onDisconnect = handler
+	return nil
+}
+
+// OnNotFound registers a handler for incoming events without a route.
+// It must be registered before Compile.
+func (a *App) OnNotFound(handler Handler) error {
+	if a.router.isCompiled {
+		return ErrRouterCompiled
+	}
+	if handler == nil {
+		return ErrHandlerNil
+	}
+	a.onNotFound = handler
+	return nil
+}
+
 func (a *App) Group(prefix string, middlewares ...Middleware) *Group {
 	return &Group{router: a.router.Group(prefix, middlewares...)}
 }
@@ -78,11 +174,40 @@ func (a *App) ServeTransportWithRemote(ctx context.Context, name string, remote 
 	config.Receive.ResponseHandler = peer.handleResponse
 	config.Receive.TransferHandler = peer.handleTransfer
 	peer.session = protocol.NewSessionWithConfig(transport, config)
-	return peer, peer.session.Run(ctx)
+	peer.session.OnProtocolEvent(func(event protocol.ProtocolEvent) {
+		if a.onProtocolEvent != nil {
+			a.onProtocolEvent(ctx, peer, event)
+		}
+	})
+	peer.session.OnProgress(func(progress protocol.Progress) {
+		if a.onProgress != nil {
+			a.onProgress(ctx, peer, progress)
+		}
+	})
+	connected := false
+	peer.session.OnEstablished(func() error {
+		if a.onConnect == nil {
+			connected = true
+			return nil
+		}
+		if err := a.onConnect(ctx, peer); err != nil {
+			return err
+		}
+		connected = true
+		return nil
+	})
+	err := peer.session.Run(ctx)
+	if connected && a.onDisconnect != nil {
+		a.onDisconnect(ctx, peer, err)
+	}
+	return peer, err
 }
 
 func (a *App) emit(ctx *Context) error {
 	err := a.router.Emit(ctx)
+	if errors.Is(err, ErrRouteNotFound) && a.onNotFound != nil {
+		err = a.onNotFound(ctx)
+	}
 	if err != nil && a.config.OnError != nil {
 		a.config.OnError(ctx, err)
 	}

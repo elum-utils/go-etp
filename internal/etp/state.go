@@ -100,4 +100,6 @@ const (
 	EventGoAwayReceived    uint16 = 14
 	EventCloseAckReceived  uint16 = 15
 	EventHandlerFailed     uint16 = 16
+	EventRateLimited       uint16 = 17
+	EventChecksumMismatch  uint16 = 18
 )
