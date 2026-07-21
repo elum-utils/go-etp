@@ -66,10 +66,8 @@ func BenchmarkSessionHandleFrameRateLimit(b *testing.B) {
 	}
 }
 
-func BenchmarkSessionHandleBadFrameRateLimit(b *testing.B) {
-	config := DefaultSessionConfig(RoleServer)
-	config.RateLimit.MaxBadFramesPerSecond = b.N + 1
-	session := NewSessionWithConfig(benchTransport{}, config)
+func BenchmarkSessionHandleInvalidFrame(b *testing.B) {
+	session := NewSessionWithConfig(benchTransport{}, DefaultSessionConfig(RoleServer))
 	frame := NewFrame(FrameRequest, SchemaEvent, EncodeEventMessage(EventMessage{Event: "bad"}))
 
 	b.ReportAllocs()

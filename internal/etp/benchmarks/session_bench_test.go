@@ -93,10 +93,8 @@ func BenchmarkSessionTransferSmallCommitted(b *testing.B) {
 			MaxChunkSize:           16 * 1024,
 		},
 		RateLimit: RateLimitConfig{
-			MaxFramesPerSecond:    int(^uint(0) >> 1),
-			MaxBytesPerSecond:     ^uint64(0),
-			MaxAuthAttempts:       int(^uint(0) >> 1),
-			MaxBadFramesPerSecond: int(^uint(0) >> 1),
+			MaxFramesPerSecond: int(^uint(0) >> 1),
+			MaxBytesPerSecond:  ^uint64(0),
 		},
 	})
 	transport.session = session
@@ -126,10 +124,8 @@ func BenchmarkSessionTransferCommitted32KiB(b *testing.B) {
 			MaxChunkSize:           16 * 1024,
 		},
 		RateLimit: RateLimitConfig{
-			MaxFramesPerSecond:    int(^uint(0) >> 1),
-			MaxBytesPerSecond:     ^uint64(0),
-			MaxAuthAttempts:       int(^uint(0) >> 1),
-			MaxBadFramesPerSecond: int(^uint(0) >> 1),
+			MaxFramesPerSecond: int(^uint(0) >> 1),
+			MaxBytesPerSecond:  ^uint64(0),
 		},
 	})
 	transport.session = session

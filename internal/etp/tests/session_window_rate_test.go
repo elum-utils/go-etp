@@ -150,20 +150,29 @@ func TestSessionRateLimitRejectsTooManyFrames(t *testing.T) {
 	requireFrameType(t, transport.frames(), FrameError)
 }
 
-func TestSessionRateLimitRejectsTooManyBadFrames(t *testing.T) {
+func TestSessionInvalidFramesEmitProtocolViolations(t *testing.T) {
 	transport := newRecordingTransport(t)
-	config := DefaultSessionConfig(RoleServer)
-	config.RateLimit.MaxBadFramesPerSecond = 1
-	session := NewSessionWithConfig(transport, config)
+	session := NewSessionWithConfig(transport, DefaultSessionConfig(RoleServer))
+	var violations int
+	session.OnProtocolEvent(func(event ProtocolEvent) {
+		if event.Code == EventProtocolViolation {
+			violations++
+		}
+		if event.Code == EventRateLimited {
+			t.Fatalf("invalid frame unexpectedly triggered rate limit")
+		}
+	})
 	bad := NewFrame(FrameRequest, SchemaEvent, EncodeEventMessage(EventMessage{Event: "bad"}))
 	bad.Header.RequestID = 0
 	if err := session.HandleFrame(context.Background(), bad); err == nil {
 		t.Fatalf("expected first bad request error")
 	}
 	if err := session.HandleFrame(context.Background(), bad); err == nil {
-		t.Fatalf("expected bad frame rate limit error")
+		t.Fatalf("expected second bad request error")
 	}
-	requireFrameType(t, transport.frames(), FrameError)
+	if violations != 2 {
+		t.Fatalf("protocol violations = %d, want 2", violations)
+	}
 }
 
 func TestSessionTransferResumeWithoutNegotiatedCapabilityIsRejected(t *testing.T) {

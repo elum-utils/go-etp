@@ -42,15 +42,13 @@ type incomingChunk struct {
 }
 
 var (
-	ErrRequestIDRequired  = errors.New("request id is required")
-	ErrRateLimitFrames    = errors.New("rate limit exceeded: frames")
-	ErrRateLimitBytes     = errors.New("rate limit exceeded: bytes")
-	ErrRateLimitAuth      = errors.New("rate limit exceeded: auth attempts")
-	ErrRateLimitBadFrames = errors.New("rate limit exceeded: bad frames")
-	ErrTooManyIncoming    = errors.New("too many incoming transfers")
-	ErrDuplicateIncoming  = errors.New("duplicate incoming transfer id")
-	ErrIncomingCanceled   = errors.New("incoming transfer canceled")
-	ErrReceiveBufferFull  = errors.New("incoming receive buffer full")
+	ErrRequestIDRequired = errors.New("request id is required")
+	ErrRateLimitFrames   = errors.New("rate limit exceeded: frames")
+	ErrRateLimitBytes    = errors.New("rate limit exceeded: bytes")
+	ErrTooManyIncoming   = errors.New("too many incoming transfers")
+	ErrDuplicateIncoming = errors.New("duplicate incoming transfer id")
+	ErrIncomingCanceled  = errors.New("incoming transfer canceled")
+	ErrReceiveBufferFull = errors.New("incoming receive buffer full")
 )
 
 func (s *Session) newIncomingTransfer(ctx context.Context, meta TransferBegin, writer IncomingTransferWriter, hash hash.Hash) *incomingTransfer {
@@ -377,14 +375,9 @@ func (s *Session) checkRateLimit(frame Frame, now time.Time) error {
 		s.rate.windowStart = now
 		s.rate.frames = 0
 		s.rate.bytes = 0
-		s.rate.authAttempts = 0
-		s.rate.badFrames = 0
 	}
 	s.rate.frames++
 	s.rate.bytes += uint64(HeaderSize + len(frame.Payload))
-	if frame.Header.FrameType == FrameAuth {
-		s.rate.authAttempts++
-	}
 	if s.config.RateLimit.MaxFramesPerSecond > 0 && s.rate.frames > s.config.RateLimit.MaxFramesPerSecond {
 		s.rate.mu.Unlock()
 		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: frames", FrameType: frame.Header.FrameType})
@@ -395,27 +388,12 @@ func (s *Session) checkRateLimit(frame Frame, now time.Time) error {
 		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: bytes", FrameType: frame.Header.FrameType})
 		return ErrRateLimitBytes
 	}
-	if s.config.RateLimit.MaxAuthAttempts > 0 && s.rate.authAttempts > s.config.RateLimit.MaxAuthAttempts {
-		s.rate.mu.Unlock()
-		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: auth attempts", FrameType: frame.Header.FrameType})
-		return ErrRateLimitAuth
-	}
 	s.rate.mu.Unlock()
 	return nil
 }
 
 func (s *Session) markBadFrame(frame Frame, message string) error {
-	s.rate.mu.Lock()
-	s.rate.badFrames++
-	badFrames := s.rate.badFrames
-	limit := s.config.RateLimit.MaxBadFramesPerSecond
-	s.rate.mu.Unlock()
 	s.emitEvent(ProtocolEvent{Code: EventProtocolViolation, Message: message, FrameType: frame.Header.FrameType})
-	if limit > 0 && badFrames > limit {
-		s.emitEvent(ProtocolEvent{Code: EventRateLimited, Message: "rate limit exceeded: bad frames", FrameType: frame.Header.FrameType})
-		_ = s.SendError(ErrorRateLimited, frame, "rate limit exceeded: bad frames")
-		return ErrRateLimitBadFrames
-	}
 	return nil
 }
 

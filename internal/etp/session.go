@@ -131,10 +131,8 @@ type AuthConfig struct {
 }
 
 type RateLimitConfig struct {
-	MaxFramesPerSecond    int
-	MaxBytesPerSecond     uint64
-	MaxAuthAttempts       int
-	MaxBadFramesPerSecond int
+	MaxFramesPerSecond int
+	MaxBytesPerSecond  uint64
 }
 
 type PayloadLimitConfig struct {
@@ -147,12 +145,10 @@ type PayloadLimitConfig struct {
 }
 
 type rateLimitState struct {
-	mu           sync.Mutex
-	windowStart  time.Time
-	frames       int
-	bytes        uint64
-	authAttempts int
-	badFrames    int
+	mu          sync.Mutex
+	windowStart time.Time
+	frames      int
+	bytes       uint64
 }
 
 type ResumeConfig struct {
@@ -428,10 +424,8 @@ func DefaultSessionConfig(role string) SessionConfig {
 			MaxPayloadBytes: 16 << 10,
 		},
 		RateLimit: RateLimitConfig{
-			MaxFramesPerSecond:    4096,
-			MaxBytesPerSecond:     64 << 20,
-			MaxAuthAttempts:       3,
-			MaxBadFramesPerSecond: 64,
+			MaxFramesPerSecond: 4096,
+			MaxBytesPerSecond:  64 << 20,
 		},
 		Payload: PayloadLimitConfig{
 			MaxFrameBytes:      MaxFrameBytes,
@@ -567,12 +561,6 @@ func normalizeSessionConfig(config SessionConfig) SessionConfig {
 	}
 	if config.RateLimit.MaxBytesPerSecond == 0 {
 		config.RateLimit.MaxBytesPerSecond = defaults.RateLimit.MaxBytesPerSecond
-	}
-	if config.RateLimit.MaxAuthAttempts <= 0 {
-		config.RateLimit.MaxAuthAttempts = defaults.RateLimit.MaxAuthAttempts
-	}
-	if config.RateLimit.MaxBadFramesPerSecond <= 0 {
-		config.RateLimit.MaxBadFramesPerSecond = defaults.RateLimit.MaxBadFramesPerSecond
 	}
 	if config.Payload.MaxTextBytes == 0 {
 		config.Payload.MaxTextBytes = defaults.Payload.MaxTextBytes
