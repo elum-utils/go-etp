@@ -11,6 +11,7 @@ var (
 	ErrRouteNotFound      = errors.New("transport: route not found")
 	ErrRouteAlreadyExists = errors.New("transport: route already exists")
 	ErrRoutePatternEmpty  = errors.New("transport: route pattern is empty")
+	ErrGroupPrefixCount   = errors.New("transport: group accepts at most one prefix")
 	ErrMiddlewareNil      = errors.New("transport: middleware is nil")
 	ErrHandlerNil         = errors.New("transport: handler is nil")
 )
@@ -25,22 +26,48 @@ type endpointRoute struct {
 	fn      Handler
 }
 
-type Router struct {
+// Router is the route-registration surface shared by App and Group.
+// Controllers should depend on this interface rather than a concrete transport.
+type Router interface {
+	// On registers handler for one exact event name, for example
+	// "control.workspace.get". Event names are combined with the optional
+	// Group prefix when the router is compiled. It returns ErrRoutePatternEmpty
+	// for an empty name, ErrRouteAlreadyExists for a duplicate route,
+	// ErrHandlerNil for a nil handler, or ErrRouterCompiled after Compile.
+	On(event string, handler Handler) error
+
+	// Use registers middleware for matching routes. pattern may be an exact
+	// event name, a namespace wildcard such as "control.*", or "*" for every
+	// route in the current group. Middleware runs in registration order before
+	// the matching handler. It returns ErrMiddlewareNil for a nil middleware or
+	// ErrRouterCompiled after Compile.
+	Use(pattern string, middleware Middleware) error
+
+	// Group creates a nested route scope. It accepts zero arguments for a group
+	// without a prefix, or one prefix such as "control". Routes registered on a
+	// prefixed group are combined with that prefix: group.On("workspace.get", h)
+	// registers "control.workspace.get". Middleware registered on parent groups
+	// is inherited by child groups. Group panics with ErrRouterCompiled after
+	// Compile or ErrGroupPrefixCount when more than one prefix is supplied.
+	Group(prefix ...string) *Group
+}
+
+type compiledRouter struct {
 	prefix      string
-	parent      *Router
+	parent      *compiledRouter
 	middlewares []middlewareRoute
 	endpoints   []endpointRoute
-	groups      []*Router
+	groups      []*compiledRouter
 	compiled    map[string]Handler
 	registered  map[string]struct{}
 	isCompiled  bool
 }
 
-func NewRouter() *Router {
-	return &Router{registered: make(map[string]struct{})}
+func NewRouter() *compiledRouter {
+	return &compiledRouter{registered: make(map[string]struct{})}
 }
 
-func (r *Router) Use(pattern string, middleware Middleware) error {
+func (r *compiledRouter) Use(pattern string, middleware Middleware) error {
 	if r.isCompiled {
 		return ErrRouterCompiled
 	}
@@ -54,7 +81,7 @@ func (r *Router) Use(pattern string, middleware Middleware) error {
 	return nil
 }
 
-func (r *Router) On(pattern string, handler Handler) error {
+func (r *compiledRouter) On(pattern string, handler Handler) error {
 	if r.isCompiled {
 		return ErrRouterCompiled
 	}
@@ -74,25 +101,23 @@ func (r *Router) On(pattern string, handler Handler) error {
 	return nil
 }
 
-func (r *Router) Group(prefix string, middlewares ...Middleware) *Router {
+func (r *compiledRouter) Group(prefix ...string) *compiledRouter {
 	if r.isCompiled {
 		panic(ErrRouterCompiled)
 	}
-	group := &Router{prefix: prefix, parent: r}
-	for _, middleware := range middlewares {
-		if middleware == nil {
-			panic(ErrMiddlewareNil)
-		}
-		group.middlewares = append(group.middlewares, middlewareRoute{
-			pattern: group.scopedMiddlewarePattern("*"),
-			fn:      middleware,
-		})
+	if len(prefix) > 1 {
+		panic(ErrGroupPrefixCount)
 	}
+	groupPrefix := ""
+	if len(prefix) == 1 {
+		groupPrefix = prefix[0]
+	}
+	group := &compiledRouter{prefix: groupPrefix, parent: r}
 	r.groups = append(r.groups, group)
 	return group
 }
 
-func (r *Router) Compile() {
+func (r *compiledRouter) Compile() {
 	root := r.root()
 	if root.isCompiled {
 		return
@@ -104,7 +129,7 @@ func (r *Router) Compile() {
 	root.isCompiled = true
 }
 
-func (r *Router) Emit(ctx *Context) error {
+func (r *compiledRouter) Emit(ctx *Context) error {
 	root := r.root()
 	if !root.isCompiled {
 		return ErrRouterNotCompiled
@@ -116,7 +141,7 @@ func (r *Router) Emit(ctx *Context) error {
 	return handler(ctx)
 }
 
-func (r *Router) compileInto(compiled map[string]Handler, inherited []middlewareRoute) {
+func (r *compiledRouter) compileInto(compiled map[string]Handler, inherited []middlewareRoute) {
 	middlewares := append(inherited, r.middlewares...)
 	for _, endpoint := range r.endpoints {
 		handler := endpoint.fn
@@ -133,7 +158,7 @@ func (r *Router) compileInto(compiled map[string]Handler, inherited []middleware
 	}
 }
 
-func (r *Router) scopedMiddlewarePattern(pattern string) string {
+func (r *compiledRouter) scopedMiddlewarePattern(pattern string) string {
 	prefix := r.fullPrefix()
 	if pattern == "" || pattern == "*" {
 		if prefix == "" {
@@ -144,7 +169,7 @@ func (r *Router) scopedMiddlewarePattern(pattern string) string {
 	return joinPattern(prefix, pattern)
 }
 
-func (r *Router) fullPrefix() string {
+func (r *compiledRouter) fullPrefix() string {
 	if r == nil {
 		return ""
 	}
@@ -160,7 +185,7 @@ func (r *Router) fullPrefix() string {
 	return strings.Join(parts, ".")
 }
 
-func (r *Router) root() *Router {
+func (r *compiledRouter) root() *compiledRouter {
 	for r.parent != nil {
 		r = r.parent
 	}

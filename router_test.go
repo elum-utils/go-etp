@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+var _ Router = (*App)(nil)
+var _ Router = (*Group)(nil)
+
+func registerRoute(router Router, event string) error {
+	return router.On(event, func(*Context) error { return nil })
+}
+
+func TestRouterInterfaceRegistersOnAppAndGroup(t *testing.T) {
+	app := New(Config{})
+	if err := registerRoute(app, "app.ping"); err != nil {
+		t.Fatalf("register app route: %v", err)
+	}
+	if err := registerRoute(app.Group(), "group.ping"); err != nil {
+		t.Fatalf("register group route: %v", err)
+	}
+}
+
 func TestRouterGroupsInheritParentMiddleware(t *testing.T) {
 	router := NewRouter()
 	var calls []string
@@ -16,7 +33,7 @@ func TestRouterGroupsInheritParentMiddleware(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("use root: %v", err)
 	}
-	group := router.Group("")
+	group := router.Group()
 	if err := group.Use("*", func(next Handler) Handler {
 		return func(ctx *Context) error {
 			calls = append(calls, "group")
@@ -44,6 +61,18 @@ func TestRouterGroupsInheritParentMiddleware(t *testing.T) {
 		if calls[i] != want[i] {
 			t.Fatalf("calls = %v", calls)
 		}
+	}
+}
+
+func TestRouterGroupOptionalPrefix(t *testing.T) {
+	router := NewRouter()
+	group := router.Group("control")
+	if err := group.On("workspace.get", func(*Context) error { return nil }); err != nil {
+		t.Fatalf("on: %v", err)
+	}
+	router.Compile()
+	if err := router.Emit(&Context{Context: context.Background(), Event: "control.workspace.get"}); err != nil {
+		t.Fatalf("emit: %v", err)
 	}
 }
 

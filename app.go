@@ -15,7 +15,7 @@ const defaultMaxPooledBody = 64 << 10
 var ErrNilFrameTransport = errors.New("transport: nil frame transport")
 
 type App struct {
-	router          *Router
+	router          *compiledRouter
 	config          Config
 	contexts        sync.Pool
 	bodyWriters     sync.Pool
@@ -147,8 +147,9 @@ func (a *App) OnNotFound(handler Handler) error {
 	return nil
 }
 
-func (a *App) Group(prefix string, middlewares ...Middleware) *Group {
-	return &Group{router: a.router.Group(prefix, middlewares...)}
+// Group creates a route group. It accepts zero or one optional event prefix.
+func (a *App) Group(prefix ...string) *Group {
+	return &Group{router: a.router.Group(prefix...)}
 }
 
 func (a *App) Compile() {
@@ -263,7 +264,7 @@ func (p *Peer) handleTransfer(ctx context.Context, info protocol.IncomingTransfe
 }
 
 type Group struct {
-	router *Router
+	router *compiledRouter
 }
 
 func (g *Group) Use(pattern string, middleware Middleware) error {
@@ -274,8 +275,9 @@ func (g *Group) On(pattern string, handler Handler) error {
 	return g.router.On(pattern, handler)
 }
 
-func (g *Group) Group(prefix string, middlewares ...Middleware) *Group {
-	return &Group{router: g.router.Group(prefix, middlewares...)}
+// Group creates a nested route group. It accepts zero or one optional event prefix.
+func (g *Group) Group(prefix ...string) *Group {
+	return &Group{router: g.router.Group(prefix...)}
 }
 
 type Adapter interface {
