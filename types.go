@@ -25,6 +25,14 @@ type ProtocolEventHandler func(context.Context, *Peer, protocol.ProtocolEvent)
 // It is called synchronously by the session and should return quickly.
 type ProgressHandler func(context.Context, *Peer, protocol.Progress)
 
+// AuthHandler validates a peer during the ETP authentication exchange. The
+// peer exposes adapter and remote-address metadata needed by application
+// authentication, such as an IP-bound session check.
+//
+// Returning AuthResult{OK: false} rejects the connection without exposing the
+// underlying validation error to the client.
+type AuthHandler func(context.Context, *Peer, protocol.AuthRequest) (protocol.AuthResult, error)
+
 // ConnectHandler runs once after authentication and the ETP handshake succeed.
 // Returning an error closes the connection.
 type ConnectHandler func(context.Context, *Peer) error

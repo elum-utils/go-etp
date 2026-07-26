@@ -95,7 +95,6 @@ type (
 	SendQueueConfig               = protocol.SendQueueConfig
 	HandlerConfig                 = protocol.HandlerConfig
 	CloseConfig                   = protocol.CloseConfig
-	AuthHandler                   = protocol.AuthHandler
 	AuthRequest                   = protocol.AuthRequest
 	AuthAccept                    = protocol.AuthAccept
 	AuthReject                    = protocol.AuthReject

@@ -80,9 +80,11 @@ func TestAppLifecycleAuthConnectDisconnect(t *testing.T) {
 
 	app := New(Config{})
 	authenticated := make(chan struct{}, 1)
+	authRemote := make(chan string, 1)
 	connected := make(chan SessionIdentity, 1)
 	disconnected := make(chan error, 1)
-	if err := app.OnAuth(func(_ context.Context, request AuthRequest) (AuthResult, error) {
+	if err := app.OnAuth(func(_ context.Context, peer *Peer, request AuthRequest) (AuthResult, error) {
+		authRemote <- peer.RemoteAddr()
 		if string(request.Payload) != "token" {
 			return AuthResult{OK: false}, nil
 		}
@@ -107,7 +109,7 @@ func TestAppLifecycleAuthConnectDisconnect(t *testing.T) {
 	defer stopServer()
 	serverDone := make(chan error, 1)
 	go func() {
-		_, err := app.ServeTransport(serverCtx, "pipe", protocol.NewStreamTransport(right))
+		_, err := app.ServeTransportWithRemote(serverCtx, "pipe", "127.0.0.1", protocol.NewStreamTransport(right))
 		serverDone <- err
 	}()
 
@@ -124,6 +126,14 @@ func TestAppLifecycleAuthConnectDisconnect(t *testing.T) {
 	case <-authenticated:
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for auth handler")
+	}
+	select {
+	case remote := <-authRemote:
+		if remote != "127.0.0.1" {
+			t.Fatalf("remote address = %q, want %q", remote, "127.0.0.1")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for auth remote address")
 	}
 	waitSessionState(t, client, "AUTH_ACCEPTED")
 	if err := client.SendHello(protocol.RoleClient); err != nil {
@@ -178,7 +188,7 @@ func TestAppOnProtocolEventAuthReject(t *testing.T) {
 	defer right.Close()
 
 	app := New(Config{})
-	if err := app.OnAuth(func(context.Context, AuthRequest) (AuthResult, error) {
+	if err := app.OnAuth(func(context.Context, *Peer, AuthRequest) (AuthResult, error) {
 		return AuthResult{OK: false, Reason: "bad token"}, nil
 	}); err != nil {
 		t.Fatalf("on auth: %v", err)
@@ -259,7 +269,7 @@ func TestAppOnError(t *testing.T) {
 func TestAppLifecycleRegistrationAfterCompile(t *testing.T) {
 	app := New(Config{})
 	app.Compile()
-	if err := app.OnAuth(func(context.Context, AuthRequest) (AuthResult, error) { return AuthResult{}, nil }); !errors.Is(err, ErrRouterCompiled) {
+	if err := app.OnAuth(func(context.Context, *Peer, AuthRequest) (AuthResult, error) { return AuthResult{}, nil }); !errors.Is(err, ErrRouterCompiled) {
 		t.Fatalf("on auth error = %v", err)
 	}
 	if err := app.OnConnect(func(context.Context, *Peer) error { return nil }); !errors.Is(err, ErrRouterCompiled) {

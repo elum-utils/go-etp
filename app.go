@@ -19,6 +19,7 @@ type App struct {
 	config          Config
 	contexts        sync.Pool
 	bodyWriters     sync.Pool
+	onAuth          AuthHandler
 	onConnect       ConnectHandler
 	onDisconnect    DisconnectHandler
 	onNotFound      Handler
@@ -66,7 +67,7 @@ func (a *App) OnAuth(handler AuthHandler) error {
 		return ErrHandlerNil
 	}
 	a.config.Session.Auth.Required = true
-	a.config.Session.Auth.Handler = handler
+	a.onAuth = handler
 	return nil
 }
 
@@ -171,6 +172,11 @@ func (a *App) ServeTransportWithRemote(ctx context.Context, name string, remote 
 	a.Compile()
 	config := a.config.Session
 	peer := &Peer{app: a, adapter: name, remote: remote}
+	if a.onAuth != nil {
+		config.Auth.Handler = func(authCtx context.Context, request protocol.AuthRequest) (protocol.AuthResult, error) {
+			return a.onAuth(authCtx, peer, request)
+		}
+	}
 	config.Receive.RequestHandler = peer.handleRequest
 	config.Receive.ResponseHandler = peer.handleResponse
 	config.Receive.TransferHandler = peer.handleTransfer
